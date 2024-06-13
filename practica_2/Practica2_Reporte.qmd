@@ -1,0 +1,379 @@
+---
+title: "Práctica 2 - PCA"
+subtitle: |
+    | Métodos Numéricos y Optimización
+editor: visual 
+author: "Mariano Villafuerte González - 156057" 
+format:
+  pdf:
+    include-in-header: 
+      text: |
+        \addtokomafont{disposition}{\rmfamily} 
+---
+
+```{r librerias, include=FALSE}
+library(here)
+library(janitor)
+library(patchwork)
+library(tidyverse)
+library(GGally)
+library(viridis)
+library(gt)
+
+# opciones de graficas
+theme_set(theme_minimal())
+```
+
+```{r lectura_datos, include=FALSE}
+wine_data <- read.csv(here('data','winequality-red.csv'))
+```
+
+## Objetivo
+
+El objetivo de esta práctica es mostrar el uso del análisis de componentes principales (PCA por sus siglas en inglés). Para esto, se toma la base de datos de *Red Wine Quality* de Kaggle.
+
+En esta práctica se mostrará todo el proceso de la aplicación de PCA, sin embargo, si se desea saber más sobre el tema se puede consultar el libro de [Optimización](https://itam-ds.github.io/analisis-numerico-computo-cientifico/README.html) de Erick Palacios.
+
+## Análisis Exploratorio
+
+La base de datos de *Red Wine Quality* cuenta con doce variables:
+
+1.  Fixed acidity
+
+2.  Volatile Acidity
+
+3.  Citric Acid
+
+4.  Residual sugar
+
+5.  Chlorides
+
+6.  Free sulfur dioxide
+
+7.  Total sulfur dioxide
+
+8.  Density
+
+9.  pH
+
+10. Sulphates
+
+11. Alcohol
+
+12. Quality
+
+Ahora bien, para un experto en vinos, puede resultar evidente qué variables sirven para determinar la calidad de un vino rojo, sin embargo, intentaremos hacer uso de un análisis descriptivo para entender mejor qué relación existe entre las variables.
+
+Nuestro primer acercamiento es ver la distribución de cada variable para las calificaciones de calidad que tenemos disponibles:
+
+```{r densityPlots, echo=FALSE}
+#| fig.height=8.5,
+#| fig.width=9
+colors <- c(  
+  'blue',
+  'firebrick',
+  'pink3',
+  'darkgreen',
+  'cyan4',
+  'peru')
+
+long_data <-wine_data %>% 
+  pivot_longer(cols=-quality, 
+               names_to="variables", 
+               values_to="value")
+
+ggplot(long_data, 
+       aes(x=value, 
+           color=factor(quality),
+           fill=factor(quality))) + 
+  geom_density(alpha=0.2) +
+  facet_wrap(~variables, scales='free') +
+  scale_color_manual(values=colors) + 
+  scale_fill_manual(values=colors) + 
+  labs(fill='Quality', color='Quality', xlab='', ylab='')+
+  theme(legend.position = "bottom",
+        axis.text.x = element_blank(),
+        axis.text.y = element_blank(),
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank()) +
+  guides(
+    color = guide_legend(nrow = 1),
+    fill = guide_legend(nrow = 1))
+```
+
+De este primer vistazo, podemos identificar algunos comportamientos interesantes, por ejemplo, el nivel de alcohol parece ser más alto en los vinos de mayor puntuación de calidad. La acidez volátil es mayor en los vinos con peor calificación. El ácido cítrico parece ser más elevado en vinos con mejor puntuación.
+
+Encontrar todas las relaciones entre las variables que pudieran explicar la calidad del Vino Rojo requeriría de un análisis exploratorio más profundo y de otro tipo de pruebas que salen del enfoque de este trabajo, sin embargo, podemos estudiar cómo se ve la nube de datos tras aplicar el análisis de componentes principales. Para esto, primero vemos cómo se ven las nubes de datos sin ningún tipo de transformación:
+
+```{r dispersion_pares, echo=FALSE, message=FALSE, warning=FALSE}
+#| fig.width=9, 
+#| fig.height=9
+ggpairs(wine_data,
+      columns = c(1,3,4,5,7,9,11),
+      mapping=aes(color=factor(quality), alpha=0.3),
+      axisLabels = "none",
+      upper="blank",
+      diag = NULL,
+      lower = list(continuous = wrap("points"))) +
+  theme_bw() +
+  scale_color_manual(values=colors)
+```
+
+## Preparación de los Datos
+
+El primer paso para este ejercicio consiste en centrar nuestros datos alrededor del cero y controlar sus escalas. Para esto, a cada variable se le resta su media y se divide entre la varianza. Esto se realiza con el objetivo de que las variables estén en la misma escala y al utilizar métodos que representen distancias, éstas no se vean afectadas meramente por la naturaleza de las variables si no por su comportamiento.
+
+Para hacer el centrado de los datos y el escalamiento, para cada columna (variable) se calcula para cada observación ($x_i$):
+
+$$
+z_i=\frac{x_i-\mu}{\sigma}
+$$ Con $\mu=$promedio de la variable, y $\sigma=$desviación estándar de la variable.
+
+```{r datos_escalados, include=FALSE}
+escala <- function(x){
+  x <- (x - mean(x, na.rm=T))/sd(x, na.rm=T)
+  return (x)
+}
+
+datos_escalados <- wine_data %>% 
+  mutate(across(!quality, escala))
+```
+
+Y podemos visualizar cómo se comporta la matriz de correlaciones de las variables centradas y escaladas.
+
+```{r heat_corr, echo=FALSE, message=FALSE, warning=FALSE}
+#| fig.width=7,
+#| fig.height=4.5
+  
+ggcorr(datos_escalados, 
+       label=T, label_size = 2, 
+       legend.size = 5,
+       size=1.5)
+
+```
+
+Con este mapa de calor, podemos observar que existe una relación lineal fuerte entre algunas variables, por ejemplo: entre *fixed acidity* y *citric acid.* Para los siguientes pasos, dejaremos fuera la variable de *quality* y veremos, al final de la aplicación de componentes principales, si estos logran captar la estructura de la calidad.
+
+## Cálculo de eigenvalores y eigenvectores
+
+Para realizar la reducción de dimensionalidad mediante PCA, lo primero que se hace es calcular los eigenvalores y eigenvectores de la matriz de varianza-covarianza. Obtenemos:
+
+```{r eigen_calculos, include=FALSE}
+cov_matrix <-datos_escalados %>% 
+  select(-quality) %>% 
+  cov() 
+
+ev <- eigen(cov_matrix)
+
+eigenvalores <- ev$values
+eigenvectores <- ev$vectors
+```
+
+```{r eigenvalores, echo=FALSE}
+tibble(`eigen valores`=eigenvalores)  %>% 
+  gt() %>% 
+  fmt_number(columns=`eigen valores`)
+```
+
+## Varianza Acumulada
+
+Y dados estos eigenvalores, podemos calcular la varianza explicada de la siguiente manera:
+
+$$
+V_E= \frac{\lambda_i}{\sum\lambda_i}
+$$
+
+De modo que se obtienen los siguientes resultados:
+
+```{r var_explicada, echo=F}
+tibble(componente=seq(1,11,by=1),
+  `eigen valores`=eigenvalores)  %>% 
+  mutate(`var explicada`=(`eigen valores`)/sum(`eigen valores`),
+         `var acum`=cumsum(`var explicada`)) %>%
+  gt() %>% 
+  fmt_number(columns=`eigen valores`) %>%
+  fmt_percent(columns=c(`var explicada`, `var acum`), decimals = 2)
+```
+
+Esto querría decir que la variabilidad total de los datos originales son explicados en un $28.17\%$ por el primer componente. Es decir, el primer componente basta para explicar la mitad de la variabilidad total de los datos.
+
+Ahora bien, lo que se busca es reducir la dimensionalidad del problema, no obstante, cuántos componentes considerar no es una pregunta con respuesta trivial y dependerá de las necesidades de cada problema. Lo más común es determinar un umbral, por ejemplo el $95\%$ y considerar los componentes necesarios para alcanzar mínimo este umbral establecido. De haber usado esa regla, en este caso nos quedaríamos con $8$ componentes en total; de modo que se estaría perdiendo aproximadamente el $5\%$ de la varianza de los datos.
+
+## Contribuciones por componente
+
+Ahora bien, los nuevos componentes son una combinación lineal de las variables originales, por lo que puede resultar de interés analizar las variables que predominan en los primeros componentes (aquellos que explican la mayor variabilidad de los datos).
+
+```{r svd_calc, include=FALSE}
+svd_calc <- svd(datos_escalados %>% select(-quality))
+Y = datos_escalados * t(svd_calc$v)
+```
+
+Para determinar esto, basta con analizar los eigenvectores que ya se calcularon anteriormente:
+
+```{r eigenvectors_table, echo=F}
+data.frame(eigenvectores,
+           row.names = colnames(datos_escalados%>%
+                                  select(-quality))) %>% 
+  select(-c(X9:X11)) %>%
+  rownames_to_column() %>%
+  arrange(desc(abs(X1))) %>%
+  gt()%>%
+  fmt_number()
+```
+
+Otro método es si usamos descomposición de valores singulares (SVD) con nuestra base de datos centrada y escalada. Recordamos que SVD regresa tres matrices:
+
+$$
+SVD \longrightarrow X= u\Sigma v
+$$ Dada esta descomposición, podemos apreciar que la matriz $v$ contiene los pesos de las combinaciones lineales para los componentes principales (se muestran los primeros $5$ componentes):
+
+{{< pagebreak >}}
+
+```{r table_v, echo=F}
+data.frame(svd_calc$v, 
+           row.names = colnames(datos_escalados%>%select(-quality))) %>% 
+  select(-c(X9:X11)) %>%
+  rownames_to_column() %>%
+  arrange(desc(abs(X1))) %>%
+  gt() %>%
+  fmt_number() %>%
+  tab_options(table.width = 1)
+
+  
+```
+
+Ahora nos enfocamos en los primeros dos componentes principales. Se puede apreciar que las variables con mayor peso para el primer componente son:
+
+-   *Fixed acidity*
+
+-   *Citric Acid*
+
+-   *pH*
+
+-   *Density*
+
+Y para el segundo componente son:
+
+-   *Total sulfur dioxide*
+
+-   *Free sulfur dioxide*
+
+-   *Alcohol*
+
+-   *Volatile acidity*
+
+-   *Residual sugar*
+
+Así pues, observamos que las variables que más aportan al primer componente (si observamos la matriz de correlaciones) tienen correlaciones altas entre ellas. Esto tiene sentido, el nuevo eje de mayor varianza podríamos considera la dispersión de estas variables que parecen ir en un mismo sentido.\
+Ahora bien, en el segundo componente las correlaciones entre las variables dominantes son mucho menores, sin embargo, se incluyen variables que durante el análisis exploratorio se identificaron como relevantes, tal como el nivel de alcohol.
+
+## Visualización en los Nuevos Componentes
+
+Lo que resta es ver el comportamiento de las variables en los nuevos componentes y estudiar si los nuevos componentes ayudan a segmentar de alguna manera los niveles de calidad (la variable que se excluyó para el análisis de PCA). Para hacer la proyección de nuestra base escalada y centrada al nuevo espacio de Componentes Principales, basta calcular:
+
+$$
+Y=XV
+$$
+
+Con $V=$ los eigenvectores calculados.
+
+```{r calc_newData, include=FALSE}
+new_data <- ((datos_escalados %>% 
+  select(-quality) %>%
+  as.matrix()) %*% eigenvectores) %>%
+  cbind(datos_escalados%>%select(quality)) %>%
+  clean_names()
+```
+
+La primera visualización es similar al análisis exploratorio realizado en un inicio. Vemos la dispersión dentro de los primeros $5$ componentes:
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+#| fig.width=6, 
+#| fig.height=5.5
+ggpairs(new_data,
+      columns = c(1,2,3,4,5),
+      mapping=aes(color=factor(quality), alpha=0.3),
+      axisLabels = "none",
+      upper="blank",
+      diag = NULL,
+      lower = list(continuous = wrap("points"))) +
+  theme_bw() +
+  scale_color_manual(values=colors)
+```
+
+Podemos apreciar una mayor dispersión dentro de los primeros componentes. Podemos hacer otro análisis de dispersión:
+
+```{r echo=FALSE, fig.align='center', fig.height=4}
+mean_data <- new_data %>%
+  group_by(quality) %>%
+  summarise(mean_x1 = mean(x1), mean_x2 = mean(x2))
+
+ggplot(new_data, aes(x1,x2, 
+                     color=factor(quality))) + 
+  geom_point(size=4) + 
+  scale_color_manual(values=colors) + 
+  geom_vline(xintercept=0, linetype='dashed')+
+  geom_hline(yintercept=0, linetype='dashed')+
+  labs(x='PCA1', y='PCA2', color='Quality')+
+  facet_wrap(~quality)+
+  geom_point(data = mean_data,
+             aes(x = mean_x1,
+                 y = mean_x2),
+             color = 'cyan3',
+             fill='cyan', 
+             size = 2,
+             shape=23)
+```
+
+Pareciera que, conforme aumenta la calidad la nube de datos tiende a moverse a la derecha y hacia abajo. Se incluye el promedio de cada nube, representado por el diamante color cian, y se puede apreciar el movimiento de este estadístico con la dinámica ya descrita.
+
+{{< pagebreak >}}
+
+Podemos hacer un análisis de dispersión para los ocho componentes principales:
+
+```{r, echo=FALSE, fig.align='center', fig.height=4}
+long_data2 <-new_data %>% 
+  select(-c(x9:x11)) %>%
+  pivot_longer(cols=-quality, 
+               names_to="variables", 
+               values_to="value")
+
+
+ggplot(long_data2, 
+       aes(x=value, 
+           color=factor(quality),
+           fill=factor(quality))) + 
+  geom_density(alpha=0.2) +
+  facet_wrap(~variables, scales='free') +
+  scale_color_manual(values=colors) + 
+  scale_fill_manual(values=colors) + 
+  labs(fill='Quality', color='Quality', xlab='', ylab='')+
+  theme(legend.position = "bottom",
+        axis.text.x = element_blank(),
+        axis.text.y = element_blank(),
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank()) +
+  guides(
+    color = guide_legend(nrow = 1),
+    fill = guide_legend(nrow = 1))
+
+```
+
+Y podemos apreciar que, en efecto, parece ser que las calificaciones más altas están asociados a un $PCA_1$ más alto, a un $PCA_2$ más bajo, y a un $PCA_3$ más alto. En los otros componentes el comportamiento parece no ser tan distintivo entre niveles de calidad.
+
+## Conclusión
+
+Este análisis de componentes principales podría ayudar con la segmentación y calificación de vinos. Es decir, estamos abstrayendo información valiosa. Considero que con $3$ componentes principales se podría desarrollar un modelo de clasficicación o de conglomerados que discrimine de mejor manera los vinos de alta y menor calidad. Lo podemos apreciar por las nubes de puntos que parecieran ya estar más separados. Esto ayudaría a los modelos predictivos a hacer predicciones más "correctas" es decir, más apegadas a los valores que podría asignar, por ejemplo, un experto de vinos.
+
+{{< pagebreak >}}
+
+## Datos y código
+
+Para este ejercicio, se usa la base de datos de *Red Wine Quality* de Kaggle. Este set de datos está disponible [aquí](https://www.kaggle.com/datasets/uciml/red-wine-quality-cortez-et-al-2009 "Kaggle - Red Wine Quality").
+
+Este reporte se hace utilizando R, no obstante, se hizo igualmente una versión en Python para los lectores que lo prefieran. Ambas versiones se pueden consultar [aquí](https://drive.google.com/drive/folders/1iGVRFF_w4P-xzMVx_UaOHHlgi1b94j4e?usp=sharing "Práctica 2 - Código").
+
+## Referencias
+
+Palacios, Erick. (2022). *Optimización*. México: Jupyter Notebook. Disponible en:\
+https://itam-ds.github.io/analisis-numerico-computo-cientifico/README.html

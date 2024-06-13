@@ -1,0 +1,411 @@
+---
+title: "Métodos Numéricos y Optimización"
+subtitle: "Práctica 1" 
+editor: visual 
+author: "Mariano Villafuerte González" 
+format:
+  pdf:
+    include-in-header: 
+      text: |
+        \addtokomafont{disposition}{\rmfamily} 
+---
+
+```{r librerias, include=FALSE}
+library(furrr)
+library(purrr)
+library(patchwork)
+library(scales)
+library(tidyverse)
+theme_set(theme_minimal())
+```
+
+Una función implícita es una función de la forma:
+
+$$ F(x,y)=0 $$
+
+Las funciones implícitas se pueden utilizar para modelar objetos geométricos. Así, un objeto geométrico puede estar definido en términos de $F:\mathbb{R}^2\rightarrow \mathbb{R}$ como:
+
+$$ G = \{(x,y) \in \mathbb{R}^2 \ \mid F(x,y) \} \le 0 \subset \mathbb{R}^2 $$
+
+Para este caso, se considera la región $G$ determinada por la función:
+
+$$ F(x,y) =(x^2+y-10)^2 + (x+y^2-12)^2-100 $$
+
+El primer paso consiste en graficar la función implícita. Al hacerlo, se puede observar que el área contenida por la función implícita no es una figura geométrica de la que se conozca su fórmula para estimar el valor del área.
+
+```{r vista_de_g, fig.align='center', fig.width=4, fig.height=2.3, echo=FALSE}
+funcion_imp <- function(X,Y){(X^2+Y-10)^2+(X+Y^2-12)^2-100} 
+
+x<-seq(-6, 6,length.out=100) 
+y<-seq(-6, 6,length.out=100)   
+
+gridValues <- expand.grid(x = x, y = y) %>%   
+  mutate(z_value=funcion_imp(x,y))  
+
+ggplot(gridValues, aes(x,y,z=z_value)) +   
+  geom_contour(breaks=0)
+```
+
+### Cálculo del Área $G$
+
+Para calcular el área de $G$, podemos usar el método de Monte Carlo. Para esto, se genera una muestra aleatoria de $x_i$. Después, se evalúa la proporción de los puntos que se encuentran dentro del área deseada y se multiplica por un área conocida delimitada por un rango (dentro del cual se distribuyen las $x_i$ aleatorias)
+
+Por ejemplo, definimos el área conocida por el cuadrado formado por $(x,y) \in \{-6, 6\}$ y se procede a calcular $N$ puntos aleatorios suponiendo que se distribuyen $U(-6,6)$. El área del cuadrado $A=bh =144$.
+
+-   *Ejemplo con* $N=10^2$
+
+Se procede a generar 100 puntos aleatorios $(x,y)$ . Una vez hecho eso, se calcula cuántos de estos cumplen la condición:
+
+$$
+F(x,y) \le 0
+$$\
+En este caso, se obtuvieron 25 puntos que cumplen esta condición, por lo que se estima que área de $G$ es:
+
+$$
+A(G) = A * \frac{n}{N}
+$$
+
+Donde $A$ es el área total seleccionada donde viven los $x_i$, $n$ son la cantidad de puntos generados que están dentro de $G$ y $N$ es el número total de $x_i$ generados. Por lo que. para este caso, el cálculo queda de la siguiente manera:
+
+$$
+A(G) =144 * \frac{25}{100}
+$$
+
+$$
+A(G) = 36
+$$
+
+Ahora bien, el cuadrado que fue seleccionado aquí se denomina el *Bounding Box,* sin embargo, no se realizaron esfuerzos por encontrar el *Best Bounding Box*. Ese tema va más allá de esta práctica, sin embargo, debe aclararse que la selección de este Bounding Box se hizo de manera visual de tal modo que toda el área $G$ estuviera contenida
+
+### Cálculo para distintos valores de $N$
+
+Este cálculo se puede realizar para distintos valores de $N$. El hacer $N$ más grande debería entregar valores más cercanos al valor verdadero. Para más información se puede consultar el libro de [Optimización](https://itam-ds.github.io/analisis-numerico-computo-cientifico/README.html "Optimización | Libro") de Erick Palacios.
+
+Por ejemplo, si se calcula con $N=10^2, 10^3, …, 10^8$, se obtienen los siguientes resultados:
+
+```{r funcion_remuestreo, include=F}
+remuestreo_n <- function(n_sample){
+  muestra <- tibble(x_value=runif(n_sample,-6,6), 
+                  y_value=runif(n_sample,-6,6)) 
+  
+  promedio <- muestra %>% 
+  mutate(z_value=(funcion_imp(x_value, y_value)<=0)) %>%
+  summarise(prom=mean(z_value)) %>% 
+  pull(prom) 
+  
+  return (promedio*144)
+}
+```
+
+```{r calculo_remuestreo, echo=FALSE, fig.height=2.2}
+set.seed(123)
+calculos <- tibble(num_sample = 10^(2:8)) %>%
+  mutate(result = map_dbl(num_sample, remuestreo_n))
+
+ggplot(calculos, aes(num_sample, result)) +
+  geom_line(linewidth=1, color="blue4") +
+  labs(x='Tamaño de N', y='Área estimada de G') +
+  scale_x_continuous(trans='log10', 
+                     breaks = trans_breaks("log10", 
+                                           function(x) 10^x),
+                     labels = trans_format("log10", 
+                                           math_format(10^.x))) +
+  gridExtra::tableGrob(calculos[, c('num_sample', 'result')], 
+                       rows=NULL)
+```
+
+```{r graficas, echo=FALSE}
+area_grafica <- tibble(x_value=runif(100000,-6,6), 
+                  y_value=runif(100000,-6,6)) %>% 
+  mutate(z_value=(funcion_imp(x_value, y_value)<=0))
+
+graf_100 <- ggplot(area_grafica%>%sample_n(100), 
+                   aes(x=x_value, y=y_value, color=z_value)) +
+  geom_point(size=0.5) + 
+  labs(x='X', y='Y', color='xi in G', title='Cien puntos') +
+  theme(legend.position = "none") +
+  scale_color_manual(values=c("gray", "blue4"))
+
+graf_500 <- ggplot(area_grafica%>%sample_n(1000), 
+                   aes(x=x_value, y=y_value, color=z_value)) +
+  geom_point(size=0.5) + 
+  labs(x='X', y='Y', color='xi in G', title='Mil puntos')+
+  theme(legend.position = "none")+
+  scale_color_manual(values=c("gray", "blue4"))
+
+graf_1000 <-ggplot(area_grafica%>% sample_n(10000), 
+                   aes(x=x_value, y=y_value, color=z_value)) +
+  geom_point(size=0.5) + 
+  labs(x='X', y='Y', color='xi in G', title='Diez mil puntos')+
+  theme(legend.position = "none")+
+  scale_color_manual(values=c("gray", "blue4"))
+
+graf_5000 <-ggplot(area_grafica%>% sample_n(100000), 
+                   aes(x=x_value, y=y_value, color=z_value)) +
+  geom_point(size=0.5) + 
+  labs(x='X', y='Y', color='xi in G', title='Cien mil puntos')+
+  theme(legend.position = "none")+
+  scale_color_manual(values=c("gray", "blue4"))
+
+(graf_100 + graf_500) / (graf_1000 + graf_5000)
+
+```
+
+Como se puede apreciar, el área calculada puede fluctuar más conforme se usan menos puntos para su cálculo, pero conforme se aumenta el la $N$ se obsevan valores más estables. Además, se muestra visualmente cómo Monte Carlo aproxima el valor del área con este muestreo aleatorio de puntos dentro de un conjunto.
+
+### Área de $G$ con Muestreo Adaptativo
+
+Otra idea que se puede desarrollar es la de aproximar el área de $G$ con cuadrados. Es decir, se pueden trazar n cuadrados dentro de $G$ y se considera que el área es igual a la de los cuadrados. Para hacer esto, se empieza con un cuadrado que contenga todo, en este caso usaremos el cuadrado formado por
+
+$$
+(x,y) \in \{-6,6\}
+$$
+
+El siguiente paso es evaluar si el cuadrado se encuentra contenido en $G$. Esto lo hacemos evaluando las esquinas y si $F(x,y) \le 0$, entonces el cuadrado se encuentra contenido en $G$ y se puede sumar al estimado del área total. En otro caso, si el cuadrado no se encuentra contenido por $G$ partimos el cuadrado en 4, partiendo por mitades el cuadrado. En este caso serían los cuadrados con vértices en
+
+$$
+(x,y) \in \{-6,-3,3,6\}
+$$
+
+Se pueden ejemplificar algunos cortes. Nos enfocamos en el cuadrante inferior derecho:
+
+```{r cortes, echo=FALSE}
+ggplot(gridValues, aes(x,y,z=z_value)) +   
+  geom_contour(breaks=0) + 
+  geom_vline(xintercept = 0, color='blue4', linetype='dashed') + 
+  geom_hline(yintercept = 0, color='blue4', linetype='dashed') +
+  geom_segment(x=0, xend=6, 
+               y=-3, yend=-3, 
+               color='blue4', linetype='dashed') +
+  geom_segment(x=3, xend=3,
+             y=-6, yend=0,
+             color='blue4', linetype='dashed') + 
+  geom_segment(x=3, xend=6, 
+             y=-4.5, yend=-4.5, 
+             color='blue4', linetype='dashed') +
+  geom_segment(x=4.5, xend=4.5, 
+             y=-6, yend=-3, 
+             color='blue4', linetype='dashed')
+  
+```
+
+Se puede notar que el último corte produce un cuadrado (en la esquina inferior derecha) en el que ya no se itera, ya que este cuadrado ya no contiene parte del área $G$.
+
+{{< pagebreak >}}
+
+Para el cálculo del área con esta idea, se utiliza la siguiente función:
+
+```{r area_cuadrados_f, monofont=5}
+rec_int <- function(f, 
+                    x_range = c(-5, 5), 
+                    y_range = c(-5, 5), 
+                    k = 1, 
+                    kmin = 5, 
+                    kmax = 20) {
+  
+  # Extraemos valores del rango
+  x1 <- x_range[1]
+  x2 <- x_range[2]
+  y1 <- y_range[1]
+  y2 <- y_range[2]
+  
+  # Calculamos la función implícita en las esquinas
+  e_1 <- f(x1, y1) <= 0
+  e_2 <- f(x1, y2) <= 0
+  e_3 <- f(x2, y1) <= 0
+  e_4 <- f(x2, y2) <= 0
+  
+  # Checamos si aún se permiten iteraciones
+  if (k < kmax) {
+    
+    # Checamos si todas las esquinas están contenidas en G
+    if (e_1 && e_2 && e_3 && e_4) {
+      
+      # Si está en G, calculamos su área
+      return ((x2 - x1) * (y2 - y1))
+    } else {
+      
+      # Checamos si alguno de los puntos está en G
+      # O si no hemos hecho las iteraciones mínimas
+      if ((e_1 || e_2 || e_3 || e_4) || k <= kmin) {
+        
+        # Calculamos los nuevos vértices
+        half_x <- (x2 + x1) / 2
+        half_y <- (y2 + y1) / 2
+        
+        # Llamamos a la función con los nuevos vértices
+        return(
+          # Primer cuadrado
+          rec_int(f, 
+                  c(x1, half_x),
+                  c(y1, half_y), 
+                  k + 1, kmin, kmax) +
+          # Segundo cuadrado
+          rec_int(f, 
+                  c(half_x, x2), 
+                  c(y1, half_y), 
+                  k + 1, kmin, kmax) +
+          # Tercer cuadrado
+          rec_int(f, 
+                  c(x1, half_x), 
+                  c(half_y, y2), 
+                  k + 1, kmin, kmax) +
+          # Cuarto cuadrado
+          rec_int(f, 
+                  c(half_x, x2), 
+                  c(half_y, y2), 
+                  k + 1, kmin, kmax))
+        
+      } else {
+        # Si ninguno de sus puntos está en G,
+        # la aportación del cuadrado es 0
+        return(0)
+      }
+    }
+  } else {
+    # si llegamos a kmax, regresamos el área de los
+    #cuadrados que tienen cuando menos un punto en G
+    if (e_1 || e_2 || e_3 || e_4) {
+      return((x2 - x1) * (y2 - y1))
+    } else {
+      return(0)
+    }
+  }
+}
+```
+
+Lo cual, produce un resultado igual a 38.7048
+
+```{r area_por_cuadrados, include=FALSE}
+result <- rec_int(funcion_imp)
+```
+
+Cabe mencionar que en esta función, se incluyen los cuadrados con al menos un vértice contenido dentro de $G$ cuando se llega a el máximo de iteraciones, sin embargo, se puede omitir ese paso y únicamente considerar los cuadrados completamente contenidos en $G$, en ambos casos, a mayor número de cuadrados, la estimación del área de $G$ será más precisa.
+
+{{< pagebreak >}}
+
+### Probabilidad de pertenecer a $G$
+
+Otro tema de interés puede ser el estimar cuál es la probabilidad de que un punto aleatorio $(x,y)$ esté en la región $G$. Es decir, se desea calcular:
+
+$$
+\mathbb{P}[(x,y) \in G]
+$$
+
+En específico, consideremos el caso en que
+
+$$
+(x,y) \in \mathbb{R}^2
+$$
+
+se distribuyen como normal bivariada con
+
+$$
+\mu_x = \mu_y \in \{-5,-4, …,4,5\}
+$$
+
+$$
+\sigma_x = \sigma_y =2
+$$
+
+$$
+\rho_{xy}=0
+$$
+
+Para este caso, la integral para calcular $\mathbb{P}[(x,y) \in G]$ esta dada por:
+
+$$
+P = \iint_G \frac{1}{2\pi\sigma_x\sigma_y\sqrt{1-\rho^2}} e^{-\frac{1}{2(1-\rho^2)}\left[\frac{(x - \mu_x)^2}{\sigma_x^2} - \frac{2\rho(x - \mu_x)(y - \mu_y)}{\sigma_x\sigma_y} + \frac{(y - \mu_y)^2}{\sigma_y^2}\right]}  \; dx \; dy
+$$
+
+$$
+P = \iint_G \frac{1}{8\pi} e^{-\frac{1}{2}\left[\frac{(x - \mu_x)^2}{4} + \frac{(y - \mu_y)^2}{4}\right]}  \; dx \; dy
+$$
+
+pero de igual manera, se puede utilizar Monte-Carlo. La integral puede parecer muy complicada, sin embargo, Monte Carlo puede facilitar este cálculo.\
+Lo primero que haremos es hacer muestras aleatorias de $(x,y)$, y procedemos a calcular la proporción de los puntos que pertenecen a la región.
+
+En este caso, no buscamos calcular un área, por eso se omite el paso de multiplicar la proporción por el área conocida del *Bounding Box.*
+
+Ahora bien, se puede observar que $\mu_x=\mu_y$ pueden tomar valores, distintos, por lo que se procede a hacer las distintas combinaciones posibles y se hace el cálculo que ya se ha mencionado.
+
+Por ejemplo, si tenemos $\mu_x=\mu_y=-5$ , se puede observar una muestra de cien puntos. En este ejemplo, alrededor de 18 puntos caen dentro de $G$ por lo que diríamos que la probabilidad de que $(x,y)$ estén en $G$ es aproximadamente $18\%$. Ahora bien, se repite esta idea para todas las combinaciones de $\mu_x=\mu_y$ y con muestras más grandes.
+
+```{r ejemplo_binorm, echo=FALSE}
+set.seed(928437)
+muestra_binorm <-MASS::mvrnorm(n=100, 
+              mu=c(-5,-5), 
+              Sigma = matrix(c(4, 0, 0, 4), ncol=2)) %>% 
+  as.data.frame() %>%
+  rename(var_x=V1, var_y=V2) %>% 
+  mutate(pertenece=funcion_imp(var_x,var_y)<=0)
+
+ggplot() +
+  geom_contour(data = gridValues, aes(x = x, y = y, z = z_value), breaks = 0) +
+  geom_point(data = muestra_binorm, aes(x = var_x, y = var_y))
+```
+
+```{r funcion_rem_binorm,include=FALSE}
+set.seed(10725)
+remuestrea_binorm <- function(mu_value, num_points){
+  mu <- c(mu_value, mu_value)
+  Sigma <- matrix(c(4, 0, 0, 4), ncol = 2)
+  muestra <- MASS::mvrnorm(n = num_points, 
+                     mu = mu, 
+                     Sigma = Sigma) %>%
+    as.data.frame() %>%
+    rename(var_x = V1, var_y = V2) %>%
+    mutate(pertenece = (funcion_imp(var_x, var_y) <= 0)) %>%
+    summarise(calculo=mean(pertenece)) %>%
+    pull(calculo)
+  return(muestra)
+}
+
+mux_muy_values <- seq(-5, 5, 1)
+puntos_values <- 10^(2:8)
+
+combinations <- crossing(mux_muy = mux_muy_values, puntos = puntos_values)
+
+result_list <- map2(combinations$mux_muy, combinations$puntos, remuestrea_binorm)
+
+tabla_binorm <- tibble(combinations, result = result_list)
+
+
+```
+
+Con esta misma idea, se calcula la probabilidad para todos los valores de $\mu_x=\mu_y$ y con distintos $n$ puntos aleatorios.
+
+```{r tabla_binorm,echo=FALSE}
+knitr:: kable(tabla_binorm %>% 
+  unnest(result) %>%
+  pivot_wider(values_from = result, 
+                             names_from = puntos),
+  digits=5,
+  format = "latex",
+  booktabs=T, 
+  col.names = c('$\\mu_x=\\mu_y$', '$10^2$', '$10^3$','$10^4$',
+                '$10^5$','$10^6$','$10^7$','$10^8$'),
+  escape=FALSE) %>%
+  kableExtra::add_header_above(c('', 'Número de puntos'=7)) %>%
+  kableExtra::kable_styling(position = 'center',
+                            latex_options = c('striped', 
+                                              'hold_position'),
+                            full_width = T)
+  
+```
+
+Y se puede hacer una gráfica de la probabilidad para cada valor de $\mu_x=\mu_y$. Se puede apreciar que el valor se estabiliza conforme se utiliza un mayor número de puntos.
+
+```{r graf_probs, echo=FALSE, fig.height=4}
+
+ggplot(tabla_binorm %>% unnest(result),aes(x=puntos, y= result))+
+  geom_line() + 
+  scale_x_continuous(trans='log10', 
+                     breaks = trans_breaks("log10", 
+                                           function(x) 10^x),
+                     labels = trans_format("log10", 
+                                           math_format(10^.x))) +
+  facet_wrap(~factor(mux_muy), scales="free_y", ncol = 3) +
+  labs(x='Número de puntos (n)', y='Probabilidad Estimada',
+       title=expression(paste("Valor de ", mu)))
+```
